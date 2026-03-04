@@ -1,92 +1,67 @@
-from fastapi import FastAPI, File, UploadFile
-import torch
-import numpy as np
-import librosa
-import tempfile
+from fastapi import FastAPI, UploadFile, File
+import shutil
 import os
+import torch
+import librosa
+import numpy as np
+from transformers import Wav2Vec2Processor, Wav2Vec2Model
 
-from models.wav2vec_model import extract_features
-from models.classifier import DeepfakeClassifier
-
-# ================= INIT APP =================
 app = FastAPI(title="Audio Deepfake Detection API")
 
-# ================= CONFIG =================
-SAMPLE_RATE = 16000
-WINDOW_SEC = 8
-HOP_SEC = 4
-device = torch.device("cpu")
+# Load wav2vec2 from HuggingFace
+processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
+wav2vec_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base")
 
-# ================= LOAD MODEL =================
-try:
-    model = DeepfakeClassifier().to(device)
-    model.load_state_dict(torch.load("deepfake_model.pth", map_location=device))
-    model.eval()
-    print("✅ Model loaded successfully")
-except Exception as e:
-    print(f"❌ Model loading error: {e}")
-    raise e
+# Dummy classifier (replace with your trained classifier)
+classifier = torch.nn.Linear(768, 2)
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-# ================= ROOT ROUTE =================
 @app.get("/")
 def home():
-    return {"message": "Audio Deepfake Detection API is running 🚀"}
+    return {"message": "Audio Deepfake Detection API running"}
 
 
-# ================= DETECTION ROUTE =================
-@app.post("/detect")
-async def detect_audio(file: UploadFile = File(...)):
-
+@app.post("/predict")
+async def predict(audio: UploadFile = File(...)):
     try:
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False) as temp:
-            temp.write(await file.read())
-            temp_path = temp.name
+
+        file_path = os.path.join(UPLOAD_DIR, audio.filename)
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(audio.file, buffer)
 
         # Load audio
-        audio, sr = librosa.load(temp_path, sr=SAMPLE_RATE)
-        os.remove(temp_path)
+        waveform, sr = librosa.load(file_path, sr=16000)
 
-        if len(audio) < SAMPLE_RATE * 2:
-            return {"error": "Audio too short. Minimum 2 seconds required."}
+        input_values = processor(
+            waveform,
+            sampling_rate=16000,
+            return_tensors="pt",
+            padding=True
+        ).input_values
 
-        window_len = int(WINDOW_SEC * sr)
-        hop_len = int(HOP_SEC * sr)
+        with torch.no_grad():
+            outputs = wav2vec_model(input_values)
 
-        total_real = 0.0
-        total_fake = 0.0
-        segment_count = 0
+        features = outputs.last_hidden_state.mean(dim=1)
 
-        # Segment-wise analysis
-        for start in range(0, len(audio) - window_len + 1, hop_len):
-            chunk = audio[start:start + window_len].astype("float32")
+        logits = classifier(features)
 
-            features = extract_features(chunk).to(device)
+        probs = torch.softmax(logits, dim=1)
 
-            with torch.no_grad():
-                logits = model(features)
-                probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
+        confidence, pred_class = torch.max(probs, dim=1)
 
-            real_p, fake_p = float(probs[0]), float(probs[1])
+        prediction = "Fake" if pred_class.item() == 1 else "Real"
 
-            total_real += real_p
-            total_fake += fake_p
-            segment_count += 1
-
-        if segment_count == 0:
-            return {"error": "Audio too short for segmentation."}
-
-        # Final percentage calculation
-        avg_real = float((total_real / segment_count) * 100)
-        avg_fake = float((total_fake / segment_count) * 100)
-
-        result = "FAKE" if avg_fake > avg_real else "REAL"
+        os.remove(file_path)
 
         return {
-            "real_percentage": round(avg_real, 2),
-            "fake_percentage": round(avg_fake, 2),
-            "final_prediction": result
+            "filename": audio.filename,
+            "prediction": prediction,
+            "confidence": round(confidence.item(), 4)
         }
 
     except Exception as e:
