@@ -1,7 +1,7 @@
 import torch
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Model
 
-MODEL_PATH = "facebook/wav2vec2-base"
+MODEL_PATH = "patrickvonplaten/wav2vec2_tiny_random"
 
 feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_PATH)
 wav2vec = Wav2Vec2Model.from_pretrained(MODEL_PATH)
