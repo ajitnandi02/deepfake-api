@@ -1,0 +1,15 @@
+torch
+torchaudio
+transformers
+librosa
+numpy
+scikit-learn
+soundfile
+fastapi
+uvicorn
+python-multipart
+torch
+librosa
+numpy
+transformers
+soundfile

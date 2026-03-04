@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+pretrained/
+dataset/
+deepfake_model.pth
+live_results.log
+.idea/
+uploads/
